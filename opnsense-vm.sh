@@ -566,7 +566,7 @@ qm set $VMID \
   -boot order=scsi0 \
   -serial0 socket >/dev/null \
   -tags community-scripts
-qm resize $VMID scsi0 100G >/dev/null
+qm resize $VMID scsi0 120G >/dev/null
   DESCRIPTION=$(cat <<EOF
 <div align='center'>
   <a href='https://Helper-Scripts.com' target='_blank' rel='noopener noreferrer'>
