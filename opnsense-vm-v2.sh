@@ -6,22 +6,21 @@ set -euo pipefail
 # Copyright (c) 2021-2025 community-scripts ORG
 # Lizenz: MIT
 # ÄNDERUNGEN:
-# - KRITISCHE KORREKTUR: Hinzufügen der fehlenden Variablen DISK_SIZE und RANDOM_UUID am Anfang des Skripts.
+# - KRITISCHE KORREKTUR: Implementierte Fallback-Logik für ISO-Downloads, um den "Could not resolve host" (Fehler 6) zu beheben.
+# - KRITISCHE KORREKTUR: Hinzufügen der fehlenden Variablen DISK_SIZE und RANDOM_UUID (für set -u).
 # - NEUER STANDARD: CORE_COUNT auf 6 gesetzt.
 
 # --- GLOBALE VARIABLEN UND STANDARDS ---
 OPNSENSE_VERSION="25.7"   
 VM_DISK_SIZE="120G"       
 RAM_SIZE="20480"          
-CORE_COUNT="6"            # Hier ist Ihre Anpassung auf 6 Kerne
+CORE_COUNT="6"            # Ihre Anpassung auf 6 Kerne
 
-# KRITISCHE FIXES FÜR "unbound variable" Fehler
-# Diese Variablen werden benötigt, um set -u zu bestehen, auch wenn die Funktionen, 
-# die sie verwenden, entfernt wurden.
-DISK_SIZE="${VM_DISK_SIZE}" # FIX FÜR "DISK_SIZE: unbound variable"
+# KRITISCHE FIXES FÜR "unbound variable" Fehler (müssen immer am Anfang stehen)
+DISK_SIZE="${VM_DISK_SIZE}" 
 RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)"
 DIAGNOSTICS=0
-METHOD="default" # Wird im Skript gesetzt, aber für den Global Scope definiert
+METHOD="default" 
 
 LANGUAGE="de_DE.UTF-8"    
 KEYMAP="de"               
@@ -187,7 +186,7 @@ function default_settings() {
   WAN_BRG="vmbr1"
   MTU=""
   START_VM="yes"
-  METHOD="default" # Wird in der globalen Variable DISK_SIZE gesetzt
+  METHOD="default" 
 
   echo -e "${DGN}Verwende VM ID: ${BGN}${VMID}${CL}"
   echo -e "${DGN}Hostname: ${BGN}${HN}${CL}"
@@ -499,22 +498,63 @@ msg_ok "VM ID ist ${CL}${BL}$VMID${CL}."
 # --- DOWNLOAD UND VORBEREITUNG DES OPNsense-ISO-IMAGES ---
 msg_info "Lade das offizielle OPNsense ISO Image (${OPNSENSE_VERSION}) herunter"
 ISO_VERSION_SHORT=$(echo $OPNSENSE_VERSION | awk -F'.' '{print $1"."$2}') 
-URL="https://mirror.opnsense.org/releases/${ISO_VERSION_SHORT}/OPNsense-dvd-${OPNSENSE_VERSION}-amd64.iso.bz2"
 ISO_FILE="OPNsense-dvd-${OPNSENSE_VERSION}-amd64.iso"
-ISO_FILE_COMPRESSED=$(basename "$URL")
+ISO_FILE_COMPRESSED="${ISO_FILE}.bz2"
+
+# Liste der Spiegelserver für Fallback bei DNS- oder Netzwerkfehlern
+declare -a MIRROR_BASES=(
+    "https://mirror.opnsense.org"
+    "https://opnsense.c0rn.nl"
+    "https://ftp.osuosl.org/pub/opnsense"
+)
+
+DOWNLOAD_SUCCESS=0
+
+for BASE_URL in "${MIRROR_BASES[@]}"; do
+    URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    
+    # Pruefen, ob curl oder wget existiert
+    if ! (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1); then
+        msg_error "Weder curl noch wget gefunden. Bitte installieren Sie eines davon (apt install curl oder apt install wget)."
+        exit 1
+    fi
+    
+    msg_info "Versuche Download von ${BASE_URL}..."
+    msg_ok "${CL}${BL}${URL}${CL}"
+    
+    # Download-Versuch
+    if command -v curl >/dev/null 2>&1; then
+        if curl -f#SL -o "$ISO_FILE_COMPRESSED" "$URL"; then
+            DOWNLOAD_SUCCESS=1
+            echo -en "\e[1A\e[0K"
+            msg_ok "Download erfolgreich von ${BASE_URL}."
+            break
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -qO "$ISO_FILE_COMPRESSED" "$URL"; then
+            DOWNLOAD_SUCCESS=1
+            echo -en "\e[1A\e[0K"
+            msg_ok "Download erfolgreich von ${BASE_URL}."
+            break
+        fi
+    fi
+    
+    # Bei Fehler wird zur nächsten URL gesprungen (durch Schleife)
+    echo -en "\e[1A\e[0K"
+    msg_info "Download von ${BASE_URL} fehlgeschlagen. Versuche nächsten Spiegelserver..."
+done
+
+if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
+    msg_error "Fehler: Download des OPNsense-ISO von allen getesteten Spiegelservern fehlgeschlagen."
+    msg_error "Bitte prüfen Sie Ihre DNS-Einstellungen und die Netzwerkverbindung Ihres Proxmox-Hosts."
+    exit 1
+fi
+# --- ENDE DOWNLOAD-FALLBACK ---
 
 if ! command -v bunzip2 >/dev/null 2>&1; then
     msg_error "bunzip2 ist nicht installiert. Bitte installieren Sie es (apt install bzip2)."
     exit 1
 fi
-
-msg_ok "${CL}${BL}${URL}${CL}"
-if command -v curl >/dev/null 2>&1; then
-  curl -f#SL -o "$ISO_FILE_COMPRESSED" "$URL"
-else
-  wget -qO "$ISO_FILE_COMPRESSED" "$URL"
-fi
-echo -en "\e[1A\e[0K"
 
 msg_info "Entpacke ISO-Datei (kann einen Moment dauern)"
 bunzip2 -k "$ISO_FILE_COMPRESSED"
@@ -536,7 +576,7 @@ msg_ok "ISO-Datei erfolgreich im Storage (${ISO_STORAGE}) importiert."
 rm -f "$ISO_FILE" "$ISO_FILE_COMPRESSED"
 
 ISO_REF="${ISO_STORAGE}:iso/${ISO_FILE}"
-# --- ENDE DOWNLOAD UND VORBEREITUNG ---
+# --- ENDE VORBEREITUNG ---
 
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 
