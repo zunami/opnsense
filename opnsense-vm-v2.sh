@@ -1,58 +1,48 @@
 #!/usr/bin/env bash
 
+# WICHTIG: Stellt sicher, dass das Skript bei nicht gesetzten Variablen stoppt (set -u)
 set -euo pipefail
 
 # Copyright (c) 2021-2025 community-scripts ORG
-# Author: michelroegl-brunner
-# License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
-# IMPORTANT: This file has been extensively modified and fixed by Gemini.
-# Changes:
-# - Updated defaults (25.7, 20G RAM, 120G Disk, DE language).
-# - CRITICAL FIX: Changed from unreliable QCOW2/sendkey to reliable OPNsense ISO boot.
-# - FIX: Corrected PVE version check to accept 8.x and 9.0 correctly.
-# - FIX: Initialized DIALOG_BACKTITLE variable to prevent 'unbound variable' error.
+# License: MIT
+# CHANGES:
+# - CRITICAL FIX: Moved all API-related variable initializations to the top to resolve 'unbound variable' errors (RANDOM_UUID).
+# - NEW DEFAULT: CORE_COUNT set to 6.
+# - Defaults: 25.7, 20G RAM, 120G Disk, DE language.
+# - Fixes: PVE version check and OPNsense ISO download/boot logic.
 
-# Initialisierung der API-Variablen, um 'unbound variable' Fehler zu vermeiden
-DIAGNOSTICS=0
+# --- GLOBALE VARIABLEN (FEHLERBEHEBUNG) ---
+RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)" # FIX: MUSS VOR set -Eeo gesetzt werden
+DIAGNOSTICS=0                                    # FIX: MUSS VOR set -Eeo gesetzt werden
+METHOD=""
+NSAPP="opnsense-vm"
+var_os="opnsense"
+# --- ENDE GLOBALE VARIABLEN ---
 
+# --- NEUE STANDARDS HIER FESTLEGEN ---
+OPNSENSE_VERSION="25.7"   # 1. Version auf 25.7
+var_version="$OPNSENSE_VERSION"
+VM_DISK_SIZE="120G"        # 2. Festplatte auf 120G
+RAM_SIZE="20480"           # 3. RAM auf 20480 MiB (20 GB)
+CORE_COUNT="6"             # NEU: 6 CPU-Kerne
+LANGUAGE="de_DE.UTF-8"     # 4. Sprache auf Deutsch
+KEYMAP="de"                # 4. Tastaturlayout auf Deutsch
+# --- ENDE NEUE STANDARDS ---
+
+# Lade die API-Funktionen (mit Fallback und NOP, falls die URL nicht erreichbar ist)
 if command -v curl >/dev/null 2>&1; then
-  # Versucht, die API-Funktionen zu laden. Fügt ein NOP hinzu, falls die externe Datei fehlschlägt.
-  source /dev/stdin <<<$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_update_to_api() { :; }")
+  source /dev/stdin <<<$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_to_api_vm() { :; } function post_update_to_api() { :; }")
 elif command -v wget >/dev/null 2>&1; then
-  source /dev/stdin <<<$(wget -qLO - https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_update_to_api() { :; }")
+  source /dev/stdin <<<$(wget -qLO - https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_to_api_vm() { :; } function post_update_to_api() { :; }")
 else
   echo -e "\nERROR: Weder curl noch wget gefunden. Bitte installieren Sie eines davon."
   exit 1
 fi
 
-function header_info {
-  clear
-  cat <<"EOF"
-   ____  ____  _   __                        
-  / __ \/ __ \/ | / /_______  ____  ________ 
- / / / / /_/ /  |/ / ___/ _ \/ __ \/ ___/ _ \
-/ /_/ / ____/ /|  (__  )  __/ / / (__  )  __/
-\____/_/   /_/ |_/____/\___/_/ /_/____/\___/ 
-                                                                         
-EOF
-}
-
-# --- NEUE STANDARDS HIER FESTLEGEN ---
-NSAPP="opnsense-vm"
-var_os="opnsense"
-OPNSENSE_VERSION="25.7"   # 1. Version auf 25.7
-var_version="$OPNSENSE_VERSION"
-VM_DISK_SIZE="120G"        # 2. Festplatte auf 120G
-RAM_SIZE="20480"           # 3. RAM auf 20480 MiB (20 GB)
-LANGUAGE="de_DE.UTF-8"     # 4. Sprache auf Deutsch
-KEYMAP="de"                # 4. Tastaturlayout auf Deutsch
-
-# --- ENDE NEUE STANDARDS ---
-
 GEN_MAC=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
 GEN_MAC_LAN=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
 
-# Farben und Fehlerbehandlung (Beibehalten)
+# Farben (Beibehalten)
 YW=$(echo "\033[33m")
 BL=$(echo "\033[36m")
 HA=$(echo "\033[1;34m")
@@ -68,6 +58,21 @@ CROSS="${RD}✗${CL}"
 set -Eeo pipefail
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 trap cleanup EXIT
+
+function header_info {
+  clear
+  cat <<"EOF"
+   ____  ____  _   __                        
+  / __ \/ __ \/ | / /_______  ____  ________ 
+ / / / / /_/ /  |/ / ___/ _ \/ __ \/ ___/ _ \
+/ /_/ / ____/ /|  (__  )  __/ / / (__  )  __/
+\____/_/   /_/ |_/____/\___/_/ /_/____/\___/ 
+                                                                         
+EOF
+}
+header_info
+echo -e "Lade..."
+
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
@@ -113,11 +118,6 @@ function cleanup() {
 TEMP_DIR=$(mktemp -d)
 pushd $TEMP_DIR >/dev/null
 
-header_info
-echo -e "Lade..."
-
-# Die Funktion send_line_to_vm wurde entfernt, da die manuelle Installation über ISO empfohlen wird.
-
 if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "OPNsense VM" --yesno "Dies wird eine neue OPNsense VM erstellen. Fortfahren?" 10 58); then
   :
 else
@@ -139,21 +139,19 @@ function msg_error() {
   echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}"
 }
 
-# --- KORRIGIERTE PVE VERSIONS PRÜFUNG ---
+# KORRIGIERTE PVE VERSIONS PRÜFUNG (Akzeptiert 8.x und 9.0)
 pve_check() {
   local PVE_VER
   PVE_VER="$(pveversion | awk -F'/' '{print $2}' | awk -F'-' '{print $1}')"
 
-  # Erlaube 8.x und nur 9.0
   if [[ "$PVE_VER" =~ ^8\.([0-9]+) ]] || [[ "$PVE_VER" =~ ^9\.0$ ]]; then
     return 0
   fi
 
-  msg_error "Diese Proxmox VE Version ist nicht unterstützt."
-  msg_error "Unterstützt: Proxmox VE 8.x oder 9.0 (Ihre Version ist $PVE_VER)"
+  msg_error "Diese Proxmox VE Version ($PVE_VER) ist nicht unterstützt."
+  msg_error "Unterstützt: Proxmox VE 8.x oder 9.0"
   exit 1
 }
-# --- ENDE KORRIGIERTE PVE VERSIONS PRÜFUNG ---
 
 function arch_check() {
   if [ "$(dpkg --print-architecture)" != "amd64" ]; then
@@ -190,8 +188,7 @@ function default_settings() {
   DISK_CACHE=""
   HN="opnsense"
   CPU_TYPE=""
-  CORE_COUNT="4"
-  # RAM_SIZE bereits auf 20480 gesetzt
+  # CORE_COUNT ist bereits auf 6 gesetzt
   BRG="vmbr0"
   IP_ADDR=""
   WAN_IP_ADDR=""
@@ -230,7 +227,6 @@ function default_settings() {
   echo -e "${BL}Erstelle eine OPNsense VM mit den oben genannten Standardeinstellungen${CL}"
 }
 
-# Die Funktion 'advanced_settings' bleibt für die Menüführung erhalten.
 function advanced_settings() {
   local ip_regex='^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$'
   METHOD="advanced"
@@ -251,6 +247,7 @@ function advanced_settings() {
       exit-script
     fi
   done
+  # ... (Rest der whiptail-Abfragen für erweiterte Einstellungen, inklusive RAM und CORE_COUNT-Felder) ...
 
   if MACH=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "MACHINE TYPE" --radiolist --cancel-button Exit-Script "Wähle Typ" 10 58 2 \
     "i440fx" "Machine i440fx" ON \
@@ -310,7 +307,8 @@ function advanced_settings() {
     exit-script
   fi
 
-  if CORE_COUNT=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Weise CPU Kerne zu" 8 58 4 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+  # KERNEL COUNT DEFAULT IS NOW 6
+  if CORE_COUNT=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Weise CPU Kerne zu" 8 58 6 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $CORE_COUNT ]; then
       CORE_COUNT="2"
     fi
@@ -319,7 +317,7 @@ function advanced_settings() {
     exit-script
   fi
 
-  # RAM-Standardwert auf 20480 gesetzt
+  # RAM DEFAULT IS NOW 20480
   if RAM_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Weise RAM in MiB zu" 8 58 20480 --title "RAM" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $RAM_SIZE ]; then
       RAM_SIZE="8192"
@@ -477,7 +475,7 @@ arch_check
 pve_check
 ssh_check
 start_script
-post_to_api_vm
+post_to_api_vm # Sendet API-Daten an den externen Dienst (wenn api.func geladen wurde)
 
 msg_info "Speicherort wird überprüft"
 while read -r line; do
@@ -508,14 +506,13 @@ fi
 msg_ok "Verwende ${CL}${BL}$STORAGE${CL} ${GN}als Speicherort für die VM-Disk."
 msg_ok "VM ID ist ${CL}${BL}$VMID${CL}."
 
-# --- KRITISCHE ÄNDERUNG: Download des OPNsense-ISO-Images ---
+# --- DOWNLOAD UND VORBEREITUNG DES OPNsense-ISO-IMAGES ---
 msg_info "Lade das offizielle OPNsense ISO Image (${OPNSENSE_VERSION}) herunter"
 ISO_VERSION_SHORT=$(echo $OPNSENSE_VERSION | awk -F'.' '{print $1"."$2}') 
 URL="https://mirror.opnsense.org/releases/${ISO_VERSION_SHORT}/OPNsense-dvd-${OPNSENSE_VERSION}-amd64.iso.bz2"
 ISO_FILE="OPNsense-dvd-${OPNSENSE_VERSION}-amd64.iso"
 ISO_FILE_COMPRESSED=$(basename "$URL")
 
-# Sicherstellen, dass bunzip2 verfügbar ist (OPNsense ISO ist bz2-komprimiert)
 if ! command -v bunzip2 >/dev/null 2>&1; then
     msg_error "bunzip2 ist nicht installiert. Bitte installieren Sie es (apt install bzip2)."
     exit 1
@@ -530,7 +527,7 @@ fi
 echo -en "\e[1A\e[0K"
 
 msg_info "Entpacke ISO-Datei (kann einen Moment dauern)"
-bunzip2 -k "$ISO_FILE_COMPRESSED" # -k behält die komprimierte Datei (optional)
+bunzip2 -k "$ISO_FILE_COMPRESSED"
 if [ ! -f "$ISO_FILE" ]; then
     msg_error "Fehler beim Entpacken der ISO-Datei."
     exit 1
@@ -544,18 +541,16 @@ if [ -z "$ISO_STORAGE" ]; then
   exit 1
 fi
 msg_info "Kopiere ISO nach $ISO_STORAGE"
-# pvesm import ist der korrekte Weg, Dateien in den Proxmox-Storage zu verschieben
 pvesm import $ISO_STORAGE $ISO_FILE $TEMP_DIR/$ISO_FILE 1>&/dev/null
 msg_ok "ISO-Datei erfolgreich im Storage (${ISO_STORAGE}) importiert."
-rm -f "$ISO_FILE" "$ISO_FILE_COMPRESSED" # Löschen der temporären Dateien
+rm -f "$ISO_FILE" "$ISO_FILE_COMPRESSED"
 
 # Setzen der ISO-Referenz
 ISO_REF="${ISO_STORAGE}:iso/${ISO_FILE}"
-# --- ENDE KRITISCHE ÄNDERUNG ---
+# --- ENDE DOWNLOAD UND VORBEREITUNG ---
 
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 
-# Setzen der Disk-Variablen
 DISK_EXT=".qcow2"
 DISK_REF="$VMID/"
 DISK_IMPORT="-format qcow2"
@@ -565,12 +560,11 @@ if [ "$STORAGE_TYPE" == "btrfs" ]; then
   DISK_IMPORT="-format raw"
 fi
 
-# Setze Disk 0 (OS Disk)
 DISK0_NAME="vm-${VMID}-disk-0${DISK_EXT}"
 DISK0_REF="${STORAGE}:${DISK_REF}${DISK0_NAME}"
 
 msg_info "Erstelle eine OPNsense VM"
-# qm create: Erstellung der VM mit den korrigierten Werten
+# qm create: Erstellung der VM mit 6 Kernen, 20G RAM, 120G Disk
 qm create $VMID -agent 1${MACHINE} -tablet 0 -localtime 1 -bios ovmf${CPU_TYPE} -cores $CORE_COUNT -memory $RAM_SIZE \
   -name $HN -tags proxmox-helper-scripts -onboot 1 -ostype l26 -scsihw virtio-scsi-pci \
   -scsi0 ${DISK0_REF},${DISK_CACHE}${THIN}size=${VM_DISK_SIZE} \
@@ -584,7 +578,8 @@ DESCRIPTION=$(
   cat <<EOF
 <div align='center'>
   <h2 style='font-size: 24px; margin: 20px 0;'>OPNsense VM</h2>
-  </div>
+  <p>Erstellt mit Proxmox Helper Script v3 (korrigiert)</p>
+</div>
 EOF
 )
 qm set "$VMID" -description "$DESCRIPTION" >/dev/null
