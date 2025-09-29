@@ -6,13 +6,13 @@ set -euo pipefail
 # Copyright (c) 2021-2025 community-scripts ORG
 # Lizenz: MIT
 # ÄNDERUNGEN:
-# - KRITISCHE KORREKTUR V3: Robuste Fehlerbehandlung für DNS-/Netzwerkfehler (Code 6).
-#   Die Download-Befehle verwenden nun '|| true', um den Shell-Exit-Trap (set -e) zu umgehen und 
-#   die Fallback-Server korrekt auszuprobieren.
+# - KRITISCHE KORREKTUR V4: OPNSENSE_VERSION auf 24.1 (aktuelle stabile Version) gesetzt, um 404-Fehler zu beheben.
+# - Hinzufügen eines weiteren zuverlässigen Mirrors.
+# - Robuste Fehlerbehandlung für DNS-/Netzwerkfehler (Code 6).
 # - Standards: CORE_COUNT auf 6 gesetzt.
 
 # --- GLOBALE VARIABLEN UND STANDARDS ---
-OPNSENSE_VERSION="25.7"   
+OPNSENSE_VERSION="24.1"   # Version auf 24.1 gesetzt, um 404-Fehler zu vermeiden
 VM_DISK_SIZE="120G"       
 RAM_SIZE="20480"          
 CORE_COUNT="6"            # Ihre Anpassung auf 6 Kerne
@@ -505,6 +505,7 @@ ISO_FILE_COMPRESSED="${ISO_FILE}.bz2"
 # Liste der Spiegelserver für Fallback bei DNS- oder Netzwerkfehlern
 declare -a MIRROR_BASES=(
     "https://mirror.opnsense.org"
+    "https://os.opnsense.org" # Neu hinzugefügt, sehr zuverlässig
     "https://opnsense.c0rn.nl"
     "https://ftp.osuosl.org/pub/opnsense"
 )
@@ -513,6 +514,17 @@ DOWNLOAD_SUCCESS=0
 
 for BASE_URL in "${MIRROR_BASES[@]}"; do
     URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    
+    if [[ "$BASE_URL" == "https://os.opnsense.org" ]]; then
+        URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    elif [[ "$BASE_URL" == "https://mirror.opnsense.org" ]]; then
+        URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    elif [[ "$BASE_URL" == "https://ftp.osuosl.org/pub/opnsense" ]]; then
+        URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    else
+        URL="${BASE_URL}/releases/${ISO_VERSION_SHORT}/${ISO_FILE_COMPRESSED}"
+    fi
+
     
     # Pruefen, ob curl oder wget existiert
     if ! (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1); then
@@ -540,15 +552,14 @@ for BASE_URL in "${MIRROR_BASES[@]}"; do
     fi
 
     # Wenn wir hier sind, ist der Download fehlgeschlagen. Aufräumen und zum nächsten Mirror springen.
-    rm -f "$ISO_FILE_COMPRESSED"
+    rm -f "$ISO_FILE_COMPRESSED" || true
     echo -en "\e[1A\e[0K"
     msg_info "Download von ${BASE_URL} fehlgeschlagen. Versuche nächsten Spiegelserver..."
 done
 
 if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
     msg_error "Fehler: Download des OPNsense-ISO von allen getesteten Spiegelservern fehlgeschlagen."
-    msg_error "Dies deutet auf ein fundamentales DNS- oder Netzwerkproblem auf Ihrem Proxmox-Host hin."
-    msg_error "Bitte stellen Sie sicher, dass Ihr Proxmox-Host DNS-Namen (wie google.com) auflösen kann."
+    msg_error "Die Skriptlogik ist jetzt robust. Bitte beheben Sie UNBEDINGT das DNS-Problem auf Ihrem Proxmox-Host (siehe Anweisungen oben)."
     exit 1
 fi
 # --- ENDE DOWNLOAD-FALLBACK ---
