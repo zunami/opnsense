@@ -6,9 +6,10 @@ set -euo pipefail
 # Copyright (c) 2021-2025 community-scripts ORG
 # Lizenz: MIT
 # ÄNDERUNGEN:
-# - KRITISCHE KORREKTUR: Implementierte Fallback-Logik für ISO-Downloads, um den "Could not resolve host" (Fehler 6) zu beheben.
-# - KRITISCHE KORREKTUR: Hinzufügen der fehlenden Variablen DISK_SIZE und RANDOM_UUID (für set -u).
-# - NEUER STANDARD: CORE_COUNT auf 6 gesetzt.
+# - KRITISCHE KORREKTUR V3: Robuste Fehlerbehandlung für DNS-/Netzwerkfehler (Code 6).
+#   Die Download-Befehle verwenden nun '|| true', um den Shell-Exit-Trap (set -e) zu umgehen und 
+#   die Fallback-Server korrekt auszuprobieren.
+# - Standards: CORE_COUNT auf 6 gesetzt.
 
 # --- GLOBALE VARIABLEN UND STANDARDS ---
 OPNSENSE_VERSION="25.7"   
@@ -16,7 +17,7 @@ VM_DISK_SIZE="120G"
 RAM_SIZE="20480"          
 CORE_COUNT="6"            # Ihre Anpassung auf 6 Kerne
 
-# KRITISCHE FIXES FÜR "unbound variable" Fehler (müssen immer am Anfang stehen)
+# KRITISCHE FIXES FÜR "unbound variable" Fehler
 DISK_SIZE="${VM_DISK_SIZE}" 
 RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)"
 DIAGNOSTICS=0
@@ -522,31 +523,32 @@ for BASE_URL in "${MIRROR_BASES[@]}"; do
     msg_info "Versuche Download von ${BASE_URL}..."
     msg_ok "${CL}${BL}${URL}${CL}"
     
-    # Download-Versuch
+    # Download-Versuch mit Fehlerunterdrückung '|| true'
     if command -v curl >/dev/null 2>&1; then
-        if curl -f#SL -o "$ISO_FILE_COMPRESSED" "$URL"; then
-            DOWNLOAD_SUCCESS=1
-            echo -en "\e[1A\e[0K"
-            msg_ok "Download erfolgreich von ${BASE_URL}."
-            break
-        fi
+        # '|| true' verhindert, dass set -e den Skript-Exit auslöst
+        curl -f#SL -o "$ISO_FILE_COMPRESSED" "$URL" || true 
     elif command -v wget >/dev/null 2>&1; then
-        if wget -qO "$ISO_FILE_COMPRESSED" "$URL"; then
-            DOWNLOAD_SUCCESS=1
-            echo -en "\e[1A\e[0K"
-            msg_ok "Download erfolgreich von ${BASE_URL}."
-            break
-        fi
+        wget -qO "$ISO_FILE_COMPRESSED" "$URL" || true
     fi
     
-    # Bei Fehler wird zur nächsten URL gesprungen (durch Schleife)
+    # PRÜFUNG DES DOWNLOAD-ERFOLGS: Hat die Datei eine Größe > 0?
+    if [ -s "$ISO_FILE_COMPRESSED" ]; then
+        DOWNLOAD_SUCCESS=1
+        echo -en "\e[1A\e[0K"
+        msg_ok "Download erfolgreich von ${BASE_URL}."
+        break
+    fi
+
+    # Wenn wir hier sind, ist der Download fehlgeschlagen. Aufräumen und zum nächsten Mirror springen.
+    rm -f "$ISO_FILE_COMPRESSED"
     echo -en "\e[1A\e[0K"
     msg_info "Download von ${BASE_URL} fehlgeschlagen. Versuche nächsten Spiegelserver..."
 done
 
 if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
     msg_error "Fehler: Download des OPNsense-ISO von allen getesteten Spiegelservern fehlgeschlagen."
-    msg_error "Bitte prüfen Sie Ihre DNS-Einstellungen und die Netzwerkverbindung Ihres Proxmox-Hosts."
+    msg_error "Dies deutet auf ein fundamentales DNS- oder Netzwerkproblem auf Ihrem Proxmox-Host hin."
+    msg_error "Bitte stellen Sie sicher, dass Ihr Proxmox-Host DNS-Namen (wie google.com) auflösen kann."
     exit 1
 fi
 # --- ENDE DOWNLOAD-FALLBACK ---
