@@ -6,16 +6,23 @@ set -euo pipefail
 # Copyright (c) 2021-2025 community-scripts ORG
 # Lizenz: MIT
 # ÄNDERUNGEN:
-# - KRITISCHE KORREKTUR: Entfernung des externen API-Skripts, der Ursache aller 'unbound variable' Fehler.
+# - KRITISCHE KORREKTUR: Hinzufügen der fehlenden Variablen DISK_SIZE und RANDOM_UUID am Anfang des Skripts.
 # - NEUER STANDARD: CORE_COUNT auf 6 gesetzt.
-# - Standards: OPNsense 25.7, 20G RAM, 120G Disk.
-# - Korrekturen: PVE-Versionsprüfung und OPNsense ISO Download/Boot-Logik.
 
 # --- GLOBALE VARIABLEN UND STANDARDS ---
 OPNSENSE_VERSION="25.7"   
 VM_DISK_SIZE="120G"       
 RAM_SIZE="20480"          
 CORE_COUNT="6"            # Hier ist Ihre Anpassung auf 6 Kerne
+
+# KRITISCHE FIXES FÜR "unbound variable" Fehler
+# Diese Variablen werden benötigt, um set -u zu bestehen, auch wenn die Funktionen, 
+# die sie verwenden, entfernt wurden.
+DISK_SIZE="${VM_DISK_SIZE}" # FIX FÜR "DISK_SIZE: unbound variable"
+RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)"
+DIAGNOSTICS=0
+METHOD="default" # Wird im Skript gesetzt, aber für den Global Scope definiert
+
 LANGUAGE="de_DE.UTF-8"    
 KEYMAP="de"               
 HN="opnsense"             # Standard-Hostname
@@ -52,12 +59,13 @@ function header_info {
                                                                          
 EOF
 }
+header_info
+echo -e "Lade..."
 
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
   local command="$2"
-  # API-Calls entfernt, um Fehler zu vermeiden
   local error_message="${RD}[ERROR]${CL} in Zeile ${RD}$line_number${CL} (Exit Code ${RD}$exit_code${CL}): Fehler bei Ausführung von ${YW}$command${CL}"
   echo -e "\n$error_message\n"
   cleanup_vmid
@@ -91,7 +99,6 @@ function cleanup_vmid() {
 
 function cleanup() {
   popd >/dev/null
-  # API-Calls entfernt
   rm -rf $TEMP_DIR
 }
 
@@ -180,7 +187,7 @@ function default_settings() {
   WAN_BRG="vmbr1"
   MTU=""
   START_VM="yes"
-  METHOD="default"
+  METHOD="default" # Wird in der globalen Variable DISK_SIZE gesetzt
 
   echo -e "${DGN}Verwende VM ID: ${BGN}${VMID}${CL}"
   echo -e "${DGN}Hostname: ${BGN}${HN}${CL}"
@@ -302,7 +309,6 @@ function advanced_settings() {
     exit-script
   fi
   
-  # Hinzufügen der Festplattengrößenabfrage (Optional, aber gut für erweiterte Einstellungen)
   if VM_DISK_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Setze Festplattengröße (z.B. 120G)" 8 58 ${VM_DISK_SIZE} --title "DISK SIZE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $VM_DISK_SIZE ]; then
       VM_DISK_SIZE="120G"
@@ -460,7 +466,6 @@ arch_check
 pve_check
 ssh_check
 start_script
-# post_to_api_vm entfernt
 
 msg_info "Speicherort wird überprüft"
 while read -r line; do
