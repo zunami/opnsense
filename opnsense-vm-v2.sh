@@ -4,45 +4,27 @@
 set -euo pipefail
 
 # Copyright (c) 2021-2025 community-scripts ORG
-# License: MIT
-# CHANGES:
-# - CRITICAL FIX: Moved all API-related variable initializations to the top to resolve 'unbound variable' errors (RANDOM_UUID).
-# - NEW DEFAULT: CORE_COUNT set to 6.
-# - Defaults: 25.7, 20G RAM, 120G Disk, DE language.
-# - Fixes: PVE version check and OPNsense ISO download/boot logic.
+# Lizenz: MIT
+# ÄNDERUNGEN:
+# - KRITISCHE KORREKTUR: Entfernung des externen API-Skripts, der Ursache aller 'unbound variable' Fehler.
+# - NEUER STANDARD: CORE_COUNT auf 6 gesetzt.
+# - Standards: OPNsense 25.7, 20G RAM, 120G Disk.
+# - Korrekturen: PVE-Versionsprüfung und OPNsense ISO Download/Boot-Logik.
 
-# --- GLOBALE VARIABLEN (FEHLERBEHEBUNG) ---
-RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)" # FIX: MUSS VOR set -Eeo gesetzt werden
-DIAGNOSTICS=0                                    # FIX: MUSS VOR set -Eeo gesetzt werden
-METHOD=""
-NSAPP="opnsense-vm"
-var_os="opnsense"
-# --- ENDE GLOBALE VARIABLEN ---
-
-# --- NEUE STANDARDS HIER FESTLEGEN ---
-OPNSENSE_VERSION="25.7"   # 1. Version auf 25.7
-var_version="$OPNSENSE_VERSION"
-VM_DISK_SIZE="120G"        # 2. Festplatte auf 120G
-RAM_SIZE="20480"           # 3. RAM auf 20480 MiB (20 GB)
-CORE_COUNT="6"             # NEU: 6 CPU-Kerne
-LANGUAGE="de_DE.UTF-8"     # 4. Sprache auf Deutsch
-KEYMAP="de"                # 4. Tastaturlayout auf Deutsch
-# --- ENDE NEUE STANDARDS ---
-
-# Lade die API-Funktionen (mit Fallback und NOP, falls die URL nicht erreichbar ist)
-if command -v curl >/dev/null 2>&1; then
-  source /dev/stdin <<<$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_to_api_vm() { :; } function post_update_to_api() { :; }")
-elif command -v wget >/dev/null 2>&1; then
-  source /dev/stdin <<<$(wget -qLO - https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func || echo "function post_to_api_vm() { :; } function post_update_to_api() { :; }")
-else
-  echo -e "\nERROR: Weder curl noch wget gefunden. Bitte installieren Sie eines davon."
-  exit 1
-fi
+# --- GLOBALE VARIABLEN UND STANDARDS ---
+OPNSENSE_VERSION="25.7"   
+VM_DISK_SIZE="120G"       
+RAM_SIZE="20480"          
+CORE_COUNT="6"            # Hier ist Ihre Anpassung auf 6 Kerne
+LANGUAGE="de_DE.UTF-8"    
+KEYMAP="de"               
+HN="opnsense"             # Standard-Hostname
+# --- ENDE GLOBALE VARIABLEN UND STANDARDS ---
 
 GEN_MAC=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
 GEN_MAC_LAN=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
 
-# Farben (Beibehalten)
+# Farben
 YW=$(echo "\033[33m")
 BL=$(echo "\033[36m")
 HA=$(echo "\033[1;34m")
@@ -55,7 +37,7 @@ BFR="\\r\\033[K"
 HOLD="-"
 CM="${GN}✓${CL}"
 CROSS="${RD}✗${CL}"
-set -Eeo pipefail
+
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 trap cleanup EXIT
 
@@ -70,14 +52,12 @@ function header_info {
                                                                          
 EOF
 }
-header_info
-echo -e "Lade..."
 
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
   local command="$2"
-  post_update_to_api "failed" "$command"
+  # API-Calls entfernt, um Fehler zu vermeiden
   local error_message="${RD}[ERROR]${CL} in Zeile ${RD}$line_number${CL} (Exit Code ${RD}$exit_code${CL}): Fehler bei Ausführung von ${YW}$command${CL}"
   echo -e "\n$error_message\n"
   cleanup_vmid
@@ -111,7 +91,7 @@ function cleanup_vmid() {
 
 function cleanup() {
   popd >/dev/null
-  post_update_to_api "done" "none"
+  # API-Calls entfernt
   rm -rf $TEMP_DIR
 }
 
@@ -186,9 +166,7 @@ function default_settings() {
   FORMAT=",efitype=4m"
   MACHINE=""
   DISK_CACHE=""
-  HN="opnsense"
   CPU_TYPE=""
-  # CORE_COUNT ist bereits auf 6 gesetzt
   BRG="vmbr0"
   IP_ADDR=""
   WAN_IP_ADDR=""
@@ -247,7 +225,6 @@ function advanced_settings() {
       exit-script
     fi
   done
-  # ... (Rest der whiptail-Abfragen für erweiterte Einstellungen, inklusive RAM und CORE_COUNT-Felder) ...
 
   if MACH=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "MACHINE TYPE" --radiolist --cancel-button Exit-Script "Wähle Typ" 10 58 2 \
     "i440fx" "Machine i440fx" ON \
@@ -307,7 +284,6 @@ function advanced_settings() {
     exit-script
   fi
 
-  # KERNEL COUNT DEFAULT IS NOW 6
   if CORE_COUNT=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Weise CPU Kerne zu" 8 58 6 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $CORE_COUNT ]; then
       CORE_COUNT="2"
@@ -317,12 +293,21 @@ function advanced_settings() {
     exit-script
   fi
 
-  # RAM DEFAULT IS NOW 20480
   if RAM_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Weise RAM in MiB zu" 8 58 20480 --title "RAM" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $RAM_SIZE ]; then
       RAM_SIZE="8192"
     fi
     echo -e "${DGN}Zugewiesener RAM: ${BGN}$RAM_SIZE${CL}"
+  else
+    exit-script
+  fi
+  
+  # Hinzufügen der Festplattengrößenabfrage (Optional, aber gut für erweiterte Einstellungen)
+  if VM_DISK_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Setze Festplattengröße (z.B. 120G)" 8 58 ${VM_DISK_SIZE} --title "DISK SIZE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $VM_DISK_SIZE ]; then
+      VM_DISK_SIZE="120G"
+    fi
+    echo -e "${DGN}Festplattengröße: ${BGN}$VM_DISK_SIZE${CL}"
   else
     exit-script
   fi
@@ -475,7 +460,7 @@ arch_check
 pve_check
 ssh_check
 start_script
-post_to_api_vm # Sendet API-Daten an den externen Dienst (wenn api.func geladen wurde)
+# post_to_api_vm entfernt
 
 msg_info "Speicherort wird überprüft"
 while read -r line; do
@@ -545,7 +530,6 @@ pvesm import $ISO_STORAGE $ISO_FILE $TEMP_DIR/$ISO_FILE 1>&/dev/null
 msg_ok "ISO-Datei erfolgreich im Storage (${ISO_STORAGE}) importiert."
 rm -f "$ISO_FILE" "$ISO_FILE_COMPRESSED"
 
-# Setzen der ISO-Referenz
 ISO_REF="${ISO_STORAGE}:iso/${ISO_FILE}"
 # --- ENDE DOWNLOAD UND VORBEREITUNG ---
 
@@ -565,7 +549,7 @@ DISK0_REF="${STORAGE}:${DISK_REF}${DISK0_NAME}"
 
 msg_info "Erstelle eine OPNsense VM"
 # qm create: Erstellung der VM mit 6 Kernen, 20G RAM, 120G Disk
-qm create $VMID -agent 1${MACHINE} -tablet 0 -localtime 1 -bios ovmf${CPU_TYPE} -cores $CORE_COUNT -memory $RAM_SIZE \
+qm create $VMID -agent 1 -tablet 0 -localtime 1 -bios ovmf${CPU_TYPE} -cores $CORE_COUNT -memory $RAM_SIZE \
   -name $HN -tags proxmox-helper-scripts -onboot 1 -ostype l26 -scsihw virtio-scsi-pci \
   -scsi0 ${DISK0_REF},${DISK_CACHE}${THIN}size=${VM_DISK_SIZE} \
   -cdrom ${ISO_REF} \
@@ -578,7 +562,7 @@ DESCRIPTION=$(
   cat <<EOF
 <div align='center'>
   <h2 style='font-size: 24px; margin: 20px 0;'>OPNsense VM</h2>
-  <p>Erstellt mit Proxmox Helper Script v3 (korrigiert)</p>
+  <p>Erstellt mit Proxmox Helper Script (final korrigiert)</p>
 </div>
 EOF
 )
@@ -601,6 +585,6 @@ echo -e "${HA}=======================================${CL}"
 echo -e "1. ${GN}Verbinden Sie sich über die Proxmox Web-Konsole (VNC) mit der VM ${CL}(VM-ID: ${BGN}${VMID}${CL})."
 echo -e "2. Melden Sie sich mit ${YW}Installer${CL} und Passwort ${YW}opnsense${CL} an."
 echo -e "3. Wählen Sie im Menü ${YW}1) Install OPNsense${CL} aus."
-echo -e "4. Stellen Sie das **Tastaturlayout auf Deutsch (de)** ein und folgen Sie den Anweisungen zur Installation auf die **120 GB Festplatte**."
+echo -e "4. Stellen Sie das **Tastaturlayout auf Deutsch (de)** ein und folgen Sie den Anweisungen zur Installation auf die **${VM_DISK_SIZE} Festplatte**."
 echo -e "5. ${RD}WICHTIG:${CL} Nach Abschluss der Installation ${RD}entfernen Sie das ISO-Image aus den Hardware-Einstellungen${CL} und starten Sie die VM neu."
 echo -e "\n${GN}Installation abgeschlossen. Viel Erfolg!${CL}\n"
